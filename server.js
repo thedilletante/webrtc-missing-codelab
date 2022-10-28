@@ -84,11 +84,21 @@ function onNewConnection(ws, connections) {
         }));
     });
 
+    const whomToNotify = new Set();
     // Remove the connection. Note that this does not tell anyone you are currently in a call with
     // that this happened. This would require additional statekeeping that is not done here.
     ws.on('close', () => {
         console.log(id, 'Connection closed');
-        connections.delete(id); 
+        connections.delete(id);
+        for (const peer of whomToNotify.values()) {
+            const connection = connections.get(peer);
+            if (connection) {
+                connection.send(JSON.stringify({
+                    type: 'bye',
+                    id
+                }));
+            }
+        }
     });
 
     ws.on('message', (message) => {
@@ -127,5 +137,17 @@ function onNewConnection(ws, connections) {
                 console.log(id, 'failed to send to peer', err);
             }
         });
+
+        switch (data.type) {
+            case 'offer':
+            case 'answer': {
+                whomToNotify.add(data.id);
+                break;
+            }
+            case 'bye': {
+                whomToNotify.delete(data.id);
+                break;
+            }
+        }
     });
 }
