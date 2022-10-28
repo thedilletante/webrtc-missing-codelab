@@ -63,6 +63,19 @@ body {
             <video id="remoteVideo" autoplay playsinline></video>
         </div>
         <div class="left">
+            <p>
+                <label>Bandwidth:</label>
+                <select id="bandwidth" disabled>
+                    <option value="unlimited" selected>unlimited</option>
+                    <option value="2000">2000</option>
+                    <option value="1000">1000</option>
+                    <option value="500">500</option>
+                    <option value="250">250</option>
+                    <option value="125">125</option>
+                    <option value="75">75</option>
+                </select>
+                kbps
+            </p>
             <p>Client ID: <span id="clientId"></span></p>
             <p>
                 <button id="audioBtn">mute audio</button>
@@ -146,6 +159,80 @@ hangupBtn.addEventListener('click', () => {
         hangup(id);
     });
 });
+
+const bandwidthSelector = document.querySelector('select#bandwidth');
+// renegotiate bandwidth on the fly.
+bandwidthSelector.onchange = () => {
+    bandwidthSelector.disabled = true;
+    const bandwidth = bandwidthSelector.options[bandwidthSelector.selectedIndex].value;
+
+    peers.forEach(pc => {
+        // In Chrome, use RTCRtpSender.setParameters to change bandwidth without
+        // (local) renegotiation. Note that this will be within the envelope of
+        // the initial maximum bandwidth negotiated via SDP.
+        if ((adapter.browserDetails.browser === 'chrome' ||
+             adapter.browserDetails.browser === 'safari' ||
+             (adapter.browserDetails.browser === 'firefox' &&
+              adapter.browserDetails.version >= 64)) &&
+            'RTCRtpSender' in window &&
+            'setParameters' in window.RTCRtpSender.prototype) {
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (!sender) {
+            return;
+          }
+          const parameters = sender.getParameters();
+          if (!parameters.encodings) {
+            parameters.encodings = [{}];
+          }
+          if (bandwidth === 'unlimited') {
+            delete parameters.encodings[0].maxBitrate;
+          } else {
+            parameters.encodings[0].maxBitrate = bandwidth * 1000;
+          }
+          sender.setParameters(parameters)
+              .then(() => bandwidthSelector.disabled = false)
+              .catch(console.error);
+          return;
+        }
+        // Fallback to the SDP munging with local renegotiation way of limiting
+        // the bandwidth.
+        pc.createOffer()
+            .then(offer => pc.setLocalDescription(offer))
+            .then(() => {
+              const desc = {
+                type: pc.remoteDescription.type,
+                sdp: bandwidth === 'unlimited' ?
+                removeBandwidthRestriction(pc.remoteDescription.sdp) :
+                updateBandwidthRestriction(pc.remoteDescription.sdp, bandwidth)
+              };
+              console.log('Applying bandwidth restriction to setRemoteDescription:\n' + desc.sdp);
+              return pc.setRemoteDescription(desc);
+            })
+            .then(() => {
+              bandwidthSelector.disabled = false;
+            })
+          .catch(err => console.log(`failed to set session description while munging for bandwidth change: ${err.message || err}`));
+    });
+};
+function updateBandwidthRestriction(sdp, bandwidth) {
+  let modifier = 'AS';
+  if (adapter.browserDetails.browser === 'firefox') {
+    bandwidth = (bandwidth >>> 0) * 1000;
+    modifier = 'TIAS';
+  }
+  if (sdp.indexOf('b=' + modifier + ':') === -1) {
+    // insert b= after c= line.
+    sdp = sdp.replace(/c=IN (.*)\r\n/, 'c=IN $1\r\nb=' + modifier + ':' + bandwidth + '\r\n');
+  } else {
+    sdp = sdp.replace(new RegExp('b=' + modifier + ':.*\r\n'), 'b=' + modifier + ':' + bandwidth + '\r\n');
+  }
+  return sdp;
+}
+
+function removeBandwidthRestriction(sdp) {
+  return sdp.replace(/b=AS:.*\r\n/, '').replace(/b=TIAS:.*\r\n/, '');
+}
+
 
 // We connect to the same server and same protocol. Note that in production
 // you will end up connecting to wss (secure websockets) all the time.
@@ -319,6 +406,8 @@ function createPeerConnection(id) {
     pc.addEventListener('signalingstatechange', () => {
         console.log(id, 'signalingstatechange', pc.signalingState);
     });
+
+    bandwidthSelector.disabled = false;
 
     let lastResult = null; // the last getStats result.
     const intervalId = setInterval(async () => {
