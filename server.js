@@ -13,13 +13,7 @@ const twilio = require('twilio')(accountSid, authToken);
 
 const port = 8080;
 
-twilio.tokens.create().then(token => {
-    console.log(`Created Twilio token: ${JSON.stringify(token)}`);
-    startServer(token.iceServers);
-});
-
-
-function startServer(iceServers) {
+function startServer() {
     // We use a HTTP server for serving static pages. In the real world you'll
     // want to separate the signaling server and how you serve the HTML/JS, the
     // latter typically through a CDN.
@@ -44,9 +38,10 @@ function startServer(iceServers) {
     const connections = new Map();
     // WebSocket server, running alongside the http server.
     const wss = new WebSocket.Server({server});
-    wss.on('connection', ws => onNewConnection(ws, connections, iceServers));
+    wss.on('connection', ws => onNewConnection(ws, connections));
 }
 
+startServer();
 
 // Generate a (unique) client id.
 // Exercise: extend this to generate a human-readable id.
@@ -55,7 +50,7 @@ function generateClientId() {
     return uuid.v4();
 }
 
-function onNewConnection(ws, connections, iceServers) {
+function onNewConnection(ws, connections) {
 
     // Assign an id to the client. The other alternative is to have the client
     // pick its id and tell us. But that needs handle duplicates. It is preferable
@@ -79,10 +74,15 @@ function onNewConnection(ws, connections, iceServers) {
 
     // Send an ice server configuration to the client. For stun this is synchronous,
     // for TURN it might require getting credentials.
-    ws.send(JSON.stringify({
-        type: 'iceServers',
-        iceServers,
-    }));
+    //
+    // Create new token for every new client
+    twilio.tokens.create().then(token => {
+        console.log(`Created Twilio token: ${JSON.stringify(token)}`);
+        ws.send(JSON.stringify({
+            type: 'iceServers',
+            iceServers: token.iceServers,
+        }));
+    });
 
     // Remove the connection. Note that this does not tell anyone you are currently in a call with
     // that this happened. This would require additional statekeeping that is not done here.
