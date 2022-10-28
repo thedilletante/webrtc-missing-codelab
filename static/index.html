@@ -195,6 +195,7 @@ function connect() {
                 window.location.hash = clientId;
                 break;
             case 'iceServers':
+                console.log(`ice servers: ${JSON.stringify(data.iceServers)}`);
                 iceServers = data.iceServers;
                 resolve(); // resolve the promise only now so we always have an ice server configuration
                 break;

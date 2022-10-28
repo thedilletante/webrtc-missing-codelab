@@ -4,33 +4,49 @@ const http = require('http');
 const WebSocket = require('ws');
 const uuid = require('uuid');
 
+// Download the helper library from https://www.twilio.com/docs/node/install
+// Find your Account SID and Auth Token at twilio.com/console
+// and set the environment variables. See http://twil.io/secure
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const twilio = require('twilio')(accountSid, authToken);
+
 const port = 8080;
- 
-// We use a HTTP server for serving static pages. In the real world you'll
-// want to separate the signaling server and how you serve the HTML/JS, the
-// latter typically through a CDN.
-const server = http.Server({})
-    .listen(port);
-server.on('listening', () => {
-    console.log('Server listening on http://localhost:' + port);
-});
-server.on('request', (request, response) => {
-    fs.readFile('static/index.html', (err, data) => {
-        if (err) {
-            console.log('could not read client file', err);
-            response.writeHead(404);
-            response.end();
-            return;
-        }
-        response.writeHead(200, {'Content-Type': 'text/html'});
-        response.end(data);
-    });
+
+twilio.tokens.create().then(token => {
+    console.log(`Created Twilio token: ${JSON.stringify(token)}`);
+    startServer(token.iceServers);
 });
 
-// A map of websocket connections.
-const connections = new Map();
-// WebSocket server, running alongside the http server.
-const wss = new WebSocket.Server({server});
+
+function startServer(iceServers) {
+    // We use a HTTP server for serving static pages. In the real world you'll
+    // want to separate the signaling server and how you serve the HTML/JS, the
+    // latter typically through a CDN.
+    const server = http.Server({})
+        .listen(port);
+    server.on('listening', () => {
+        console.log('Server listening on http://localhost:' + port);
+    });
+    server.on('request', (request, response) => {
+        fs.readFile('static/index.html', (err, data) => {
+            if (err) {
+                console.log('could not read client file', err);
+                response.writeHead(404);
+                response.end();
+                return;
+            }
+            response.writeHead(200, {'Content-Type': 'text/html'});
+            response.end(data);
+        });
+    });
+    // A map of websocket connections.
+    const connections = new Map();
+    // WebSocket server, running alongside the http server.
+    const wss = new WebSocket.Server({server});
+    wss.on('connection', ws => onNewConnection(ws, connections, iceServers));
+}
+
 
 // Generate a (unique) client id.
 // Exercise: extend this to generate a human-readable id.
@@ -38,8 +54,9 @@ function generateClientId() {
     // TODO: enforce uniqueness here instead of below.
     return uuid.v4();
 }
- 
-wss.on('connection', (ws) => {
+
+function onNewConnection(ws, connections, iceServers) {
+
     // Assign an id to the client. The other alternative is to have the client
     // pick its id and tell us. But that needs handle duplicates. It is preferable
     // if you have ids from another source but requires some kind of authentication.
@@ -64,7 +81,7 @@ wss.on('connection', (ws) => {
     // for TURN it might require getting credentials.
     ws.send(JSON.stringify({
         type: 'iceServers',
-        iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
+        iceServers,
     }));
 
     // Remove the connection. Note that this does not tell anyone you are currently in a call with
@@ -111,4 +128,4 @@ wss.on('connection', (ws) => {
             }
         });
     });
-});
+}
